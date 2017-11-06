@@ -3,12 +3,21 @@ function Operator(el)
   this.el = document.createElement('div'); this.el.id = "operator";
   this.input_wrapper = document.createElement('div'); this.input_wrapper.id = "wrapper"
   this.input_el = document.createElement('textarea'); this.input_el.id = "commander";
-  this.input_el.setAttribute("placeholder","Input command here");
+  this.input_el.setAttribute("placeholder","Connected as @neauoire");
   this.hint_el = document.createElement('t'); this.hint_el.id = "hint";
+  this.options_el = document.createElement('div'); this.options_el.id = "options"
+  this.rune_el = document.createElement('div'); this.rune_el.id = "rune"
   this.input_wrapper.appendChild(this.input_el);
   this.input_wrapper.appendChild(this.hint_el);
+  this.input_wrapper.appendChild(this.rune_el)
   this.el.appendChild(this.input_wrapper)
+  this.el.appendChild(this.options_el)
+
   this.name_pattern = new RegExp(/^@(\w+)/, "i");
+
+  this.cmd_history = [];
+  this.cmd_index = -1;
+  this.cmd_buffer = "";
 
   this.install = function(el)
   {
@@ -20,18 +29,33 @@ function Operator(el)
     this.input_el.addEventListener('dragleave',r.operator.drag_leave, false);
     this.input_el.addEventListener('drop',r.operator.drop, false);
 
+    this.options_el.innerHTML = "<t data-operation='filter keyword'>filter</t> <t data-operation='whisper:user_name message'>whisper</t> <t data-operation='quote:user_name-id message'>quote</t> <t data-operation='message >> media.jpg'>media</t> <t class='right' data-operation='edit:id message'>edit</t> <t class='right' data-operation='delete:id'>delete</t>";
+
     this.update();
   }
 
   this.update = function()
   {
     this.grow_input_height(this.input_el);
+
     var input = this.input_el.value.trim();
     var words = input === "" ? 0 : input.split(" ").length;
     var chars = input.length;
     var key = this.input_el.value.split(" ")[this.input_el.value.split(" ").length-1];
-    
-    this.hint_el.innerHTML = chars+"C "+words+"W";
+
+    this.hint_el.innerHTML = this.autocomplete_words().length > 0 ? this.autocomplete_words()[0] : chars+"C "+words+"W";
+    this.hint_el.className = this.autocomplete_words().length > 0 ? "autocomplete" : "";
+    this.rune_el.innerHTML = ">";
+    this.rune_el.className = input.length > 0 ? "input" : "";
+
+    var keywords = ["filter","whisper","quote","edit","delete"]
+
+    if(keywords.indexOf(input.split(" ")[0]) > -1 || input.indexOf(":") > -1){
+      this.rune_el.innerHTML = "$";
+    }
+    if(input.indexOf(">>") > -1){
+      this.rune_el.innerHTML = "!";
+    }
   }
 
   this.validate = function()
@@ -42,6 +66,10 @@ function Operator(el)
     var option = command.indexOf(":") > -1 ? command.split(":")[1] : null;
     command = command.indexOf(":") > -1 ? command.split(":")[0] : command;
 
+    this.cmd_history.push(this.input_el.value);
+    this.cmd_index = -1;
+    this.cmd_buffer = "";
+
     if(this.commands[command]){
       this.commands[command](params,option);
     }
@@ -49,17 +77,18 @@ function Operator(el)
       this.commands.say(this.input_el.value.trim());
     }
     this.input_el.value = "";
+    r.home.feed.refresh(command+" validated");
   }
 
   this.inject = function(text)
   {
     this.input_el.value = text;
     this.input_el.focus();
+    this.update();
   }
 
   this.commands = {};
 
-  // catches neauoire from @neauoire
   this.commands.say = function(p)
   {
     var message = p.trim();
@@ -73,22 +102,23 @@ function Operator(el)
       message = message.split(" >> ")[0].trim();
     }
 
-    var data = {message:message,timestamp:Date.now()};
+    var data = {media:"", message:message, timestamp:Date.now(), target:[]};
     if(media){
       data.media = media;
     }
-    // if message starts with an @ symbol, then we're doing a mention
-    if(message.indexOf("@") == 0){
-      var name = message.split(" ")[0]
-      // execute the regex & get the first matching group (i.e. no @, only the name)
-      name = r.operator.name_pattern.exec(name)[1]
-      var portals = r.operator.lookup_name(name);
+    // handle mentions
+    var exp = /([@~])(\w+)/g;
+    var tmp;
+    while((tmp = exp.exec(message)) !== null){
+      var portals = r.operator.lookup_name(tmp[2]);
       if(portals.length > 0){
-        data.target = portals[0].dat;
+        data.target.push(portals[0].url);
+      }else{
+        data.target.push("");
       }
     }
+
     r.home.add_entry(new Entry(data));
-    setTimeout(r.home.feed.refresh, 250);
   }
 
   this.commands.edit = function(p,option)
@@ -109,7 +139,6 @@ function Operator(el)
 
     r.home.save();
     r.home.update();
-    setTimeout(r.home.feed.refresh, 250);
   }
 
   this.commands.undat = function(p,option)
@@ -130,106 +159,76 @@ function Operator(el)
 
     r.home.save();
     r.home.update();
-    setTimeout(r.home.feed.refresh, 250);
   }
 
   this.commands.dat = function(p,option)
   {
-    var path = "dat:"+option;
-    if(r.home.portal.json.dat == path){ return; }
-    // resolve dns shortnames to their actual dat:// URIs
-    DatArchive.resolveName(path).then(function(result) {
-        path = "dat://" + result + "/";
+    option = option.replace("dat://","").replace(/\//g,"").trim();
+    if(option.length != 64){ console.log("Invalid url: ",option); return; }
 
-        // Remove
-        if(r.home.portal.json.port.indexOf(path) == -1){
-          r.home.portal.json.port.push(path);
-        }
-
-        r.home.save();
-        r.home.update();
-        setTimeout(r.home.feed.refresh, 250);
-    }).catch(function(e) { console.error("Error when resolving added portal in operator.js", e) })
-  }
-
-  this.commands.fix_port = function() {
-      var promises = r.home.portal.json.port.map(function(portal) {
-          return new Promise(function(resolve, reject) {
-              console.log("first promise")
-              if(portal.slice(-1) !== "/") { portal += "/" }
-              if(r.home.portal.json.dat == portal){ return; }
-              // resolve dns shortnames to their actual dat:// URIs
-              DatArchive.resolveName(portal).then(function(result) {
-                  result = "dat://" + result + "/";
-                  resolve(result);
-              }).catch(function(e) { console.error("Error when resolving in fix_port:operator.js", e, portal); resolve(portal) })
-          })
-      })
-      Promise.all(promises).then(function(fixed_ports) {
-          r.home.portal.json.port = fixed_ports;
-          r.home.save();
-      }).catch(function(e) {
-          console.error("Error when fixing ports; probably offline or malformed json", e)
-      })
+    for(id in r.home.portal.json.port){
+      var port_url = r.home.portal.json.port[id];
+      if(port_url.indexOf(option) > -1){
+        return;
+      }
+    }
+    r.home.portal.json.port.push("dat://"+option+"/");
+    r.home.save();
+    r.home.update();
   }
 
   this.commands.delete = function(p,option)
   {
     r.home.portal.json.feed.splice(option, 1)
     r.home.save();
-    setTimeout(r.home.feed.refresh, 250);
   }
 
-  this.commands.filter = function(p)
+  this.commands.filter = function(p,option)
   {
+    var target = option ? option : "";
+    window.location.hash = target;
+    r.home.feed.target = target;
+    r.home.feed.el.className = target;
     r.home.feed.filter = p;
-    setTimeout(r.home.feed.refresh, 250);
   }
 
   this.commands.clear_filter = function()
   {
+    window.location.hash = "";
     r.home.feed.filter = "";
-    setTimeout(r.home.feed.refresh, 250);
+    r.home.feed.target = "";
   }
 
   this.commands.quote = function(p,option)
   {
     var message = p;
     var name = option.split("-")[0];
-    var ref = option.split("-")[1];
+    var ref = parseInt(option.split("-")[1]);
 
     var portals = r.operator.lookup_name(name);
-    if(portals.length === 0 || !portals[0].feed[ref]){
-      console.log("Missing portal")
+
+    if(portals.length === 0 || !portals[0].json.feed[ref]){
       return;
     }
 
-    var quote = portals[0].feed[ref];
-    var target = portals[0].dat;
+    var quote = portals[0].json.feed[ref];
+    var target = portals[0].url;
 
-    var media = null;
-    // Rich content
-    if(message.indexOf(" >> ") > -1){
-      media = message.split(" >> ")[1].split(" ")[0].trim();
-      message = message.split(" >> ")[0].trim();
-    }
+    var media = portals[0].json.feed[ref].media;
 
-    var data = {message:message,timestamp:Date.now(),quote:quote,target:target,ref:ref};
-    if(media){
-      data.media = media;
-    }
+    var data = {message:message,timestamp:Date.now(),quote:quote,target:target,ref:ref,media:media};
+
     r.home.add_entry(new Entry(data));
 
     r.home.save();
     r.home.update();
-    setTimeout(r.home.feed.refresh, 250);
   }
 
   this.commands.whisper = function(p,option)
   {
     var name = option;
     var portal = r.operator.lookup_name(name);
-    var target = portal[0].dat;
+    var target = portal[0].url;
 
     var message = p;
     var media = null;
@@ -239,8 +238,8 @@ function Operator(el)
       media = message.split(" >> ")[1].split(" ")[0].trim();
       message = message.split(" >> ")[0].trim();
     }
-      
-    var data = {message:message,timestamp:Date.now(),media:media,target:target,whisper:true};  
+
+    var data = {message:message,timestamp:Date.now(),media:media,target:target,whisper:true};
     if(media){
       data.media = media;
     }
@@ -248,17 +247,26 @@ function Operator(el)
     r.home.add_entry(new Entry(data));
   }
 
-  this.commands.mentions = function()
+  this.autocomplete_words = function()
   {
-    r.home.feed.filter = "@" + r.home.portal.json.name;
-    
-    setTimeout(r.home.feed.refresh, 250);
+    var words = r.operator.input_el.value.split(" ");
+    var last = words[words.length - 1]
+    var name_match = r.operator.name_pattern.exec(last);
+
+    if(!name_match){ return []; }
+    var a = [];
+    var name = name_match[1];
+    for(i in r.home.feed.portals){
+      var portal = r.home.feed.portals[i];
+      if(portal.json.name && portal.json.name.substr(0, name.length) == name){
+        a.push(portal.json.name);
+      }
+    }
+    return a
   }
 
   this.key_down = function(e)
   {
-    //console.log(e);
-
     if(e.key == "Enter" && !e.shiftKey){
       e.preventDefault();
       r.operator.validate();
@@ -276,15 +284,52 @@ function Operator(el)
       var last = words[words.length - 1]
       var name_match = r.operator.name_pattern.exec(last);
       if(name_match) {
-        var autocomplete = r.index.autocomplete_name(name_match[1]);
+        var autocomplete = r.operator.autocomplete_words();
         if (autocomplete.length > 0) {
-          words[words.length - 1] = "@" + autocomplete[0].name;
+          words[words.length - 1] = "@" + autocomplete[0];
           r.operator.inject(words.join(" ")+" ");
           r.operator.update();
           return;
         }
       }
     }
+
+    if(e.key == "ArrowUp"){
+      if(r.operator.cmd_history.length > 0){
+        e.preventDefault();
+      }
+      if(r.operator.cmd_index == -1){
+        r.operator.cmd_index = r.operator.cmd_history.length-1;
+        r.operator.cmd_buffer = r.operator.input_el.value;
+      }
+      else if(r.operator.cmd_index > 0){
+        r.operator.cmd_index -= 1;
+      }
+      if(r.operator.cmd_history.length > 0){
+        r.operator.inject(r.operator.cmd_history[r.operator.cmd_index]);
+      }
+    }
+    if(e.key == "ArrowDown"){
+      if(r.operator.cmd_history.length > 0){
+        e.preventDefault();
+      }
+      if(r.operator.cmd_index == r.operator.cmd_history.length-1 && r.operator.cmd_history.length > 0){
+        r.operator.inject(r.operator.cmd_buffer);
+        r.operator.cmd_index = -1;
+        return;
+      }
+      else if(r.operator.cmd_index == -1){
+        return;
+      }
+      else if(r.operator.cmd_index < r.operator.cmd_history.length-1){
+        r.operator.cmd_index += 1;
+      }
+
+      if(r.operator.cmd_history.length > 0){
+        r.operator.inject(r.operator.cmd_history[r.operator.cmd_index]);
+      }
+    }
+
     r.operator.update();
   }
 
@@ -346,8 +391,7 @@ function Operator(el)
 
   this.validate_site = function(s)
   {
-    if(s)
-    {
+    if(s){
         //strip trailing slash
       s = s.replace(/\/$/, '');
         //does it have no http/https/dat? default to http
@@ -359,7 +403,7 @@ function Operator(el)
 
   this.grow_input_height = function(el)
   {
-    el.style.height = (parseInt(el.value.length / 30) * 20) + "px";
+    el.style.height = (parseInt(el.value.length / 40) * 20) + "px";
   }
 
   this.lookup_name = function(name)
@@ -368,7 +412,7 @@ function Operator(el)
     var results = [];
     for(var url in r.home.feed.portals){
       var portal = r.home.feed.portals[url];
-      if(portal.json.name === name){ results.push(portal.json); }
+      if(portal.json.name === name){ results.push(portal); }
     }
     return results;
   }

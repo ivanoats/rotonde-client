@@ -21,6 +21,13 @@ function Entry(data,host)
 
   this.to_html = function()
   {
+    this.is_mention = false;
+    for(i in this.target){
+      if(to_hash(this.target[i]) == to_hash(r.home.portal.url)){
+        this.is_mention = true;
+        break;
+      }
+    }
     var html = "";
 
     html += this.icon();
@@ -28,7 +35,7 @@ function Entry(data,host)
     html += this.body();
     html += this.rmc();
 
-    return "<div class='entry "+(this.whisper ? 'whisper' : '')+"'>"+html+"<hr/></div>";
+    return "<div class='entry "+(this.whisper ? 'whisper' : '')+" "+(this.is_mention ? 'mention' : '')+"'>"+html+"<hr/></div>";
   }
 
   this.icon = function()
@@ -40,7 +47,20 @@ function Entry(data,host)
   {
     var html = ""
 
-    html += "<t class='portal'><a href='"+this.host.url+"'>"+(this.is_seed ? "@" : "~")+this.host.json.name+"</a> "+this.rune()+" "+(this.target ? "<a href='"+this.target+"'>"+portal_from_hash(this.target.toString())+"</a>" : "")+"</t>";
+    html += "<t class='portal'><a href='"+this.host.url+"'>"+this.host.relationship()+this.host.json.name+"</a> "+this.rune()+" ";
+
+    for(i in this.target){
+      if(this.target[i]){
+        html += "<a href='" + this.target[i] + "'>" + portal_from_hash(this.target[i].toString()) + "</a>";
+      }else{
+        html += "...";
+      }
+      if(i != this.target.length-1){
+        html += ", ";
+      }
+    }
+
+    html += "</t><t class='link' data-operation='filter:"+this.host.json.name+"-"+this.id+"'>•</t>";
 
     var operation = '';
     if(this.host.json.name == r.home.portal.json.name)
@@ -83,10 +103,13 @@ function Entry(data,host)
       audiotypes = ["mp3", "ogg", "wav"];
       videotypes = ["mp4", "webm"]; // "ogg",
       imagetypes = ["apng", "bmp", "dib", "gif", "jpg", "jpeg", "jpe", "png", "svg", "svgz", "tiff", "tif", "webp"];
-      if(audiotypes.indexOf(extension) > -1){ html += "<audio class='media' src='"+this.host.url+"/media/content/"+this.media+"' controls />"; }
-      else if(videotypes.indexOf(extension) > -1){ html += "<video class='media' src='"+this.host.url+"/media/content/"+this.media+"' controls />"; }
-      else if(imagetypes.indexOf(extension) > -1){ html += "<img class='media' src='"+this.host.url+"/media/content/"+this.media+"'/>"; }
-      else{ html +="<a class='media' href='"+this.host.url+"/media/content/"+this.media+"'>&gt;&gt; "+this.media+"</a>"; }
+
+      var origin = this.quote && this.target ? this.target : this.host.url;
+
+      if(audiotypes.indexOf(extension) > -1){ html += "<audio class='media' src='"+origin+"/media/content/"+this.media+"' controls />"; }
+      else if(videotypes.indexOf(extension) > -1){ html += "<video class='media' src='"+origin+"/media/content/"+this.media+"' controls />"; }
+      else if(imagetypes.indexOf(extension) > -1){ html += "<img class='media' src='"+origin+"/media/content/"+this.media+"'/>"; }
+      else{ html +="<a class='media' href='"+origin+"/media/content/"+this.media+"'>&gt;&gt; "+this.media+"</a>"; }
     }
     return html;
   }
@@ -175,7 +198,7 @@ function Entry(data,host)
       var portals = []; // name_match ? r.index.lookup_name(name_match[1]) : [];
       if(portals.length > 0){
         var remnants = word.substr(name_match[0].length);
-        n.push("<a href='"+portals[0].dat+"' class='known_portal'>"+name_match[0]+"</a>"+remnants);
+        n.push("<a href='"+portals[0].url+"' class='known_portal'>"+name_match[0]+"</a>"+remnants);
       }
       else{
         n.push(word)
@@ -203,15 +226,57 @@ function Entry(data,host)
     return timeSince(this.timestamp);
   }
 
-  this.is_visible = function(filter = null)
+  this.is_visible = function(filter = null,feed_target = null)
   {
-    if(this.whisper && this.target != r.home.portal.json.dat && this.host.json.name != r.home.portal.json.name){
-      return false;
+    if(feed_target == "mentions"){
+      feed_target = null;
+      if(! this.is_mention){
+        return false;
+      }
+    }
+    if(this.whisper && this.host.json.name != r.home.portal.json.name){
+      for(url in this.target){
+        if(to_hash(url) != to_hash(r.home.portal.url)){
+          return false;
+        }
+      }
     }
     if(filter && this.message.indexOf(filter) < 0){
       return false;
     }
+    if(feed_target && feed_target != this.host.json.name){
+      return false;
+    }
     return true;
+  }
+
+  this.detect_mention = function()
+  {
+    var im = false;
+    if(this.target){
+      if(!(this.target instanceof Array)){
+          if(this.target.dat) {
+            this.target = [this.target.dat];
+          } else {
+            this.target = [this.target ? this.target : ""];
+          }
+      }
+
+      if(this.message.toLowerCase().indexOf(r.home.portal.json.name) > -1){
+        im = true;
+      }
+      for(var i in this.target){
+        if(to_hash(this.target[i]) == to_hash(r.home.portal.url)){
+          im = true;
+          break;
+        }
+      }
+    }
+
+    if(im){
+      r.home.feed.mentions += 1;
+    }
+    return im;
   }
 }
 

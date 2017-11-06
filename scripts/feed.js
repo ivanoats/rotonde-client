@@ -2,12 +2,44 @@ function Feed(feed_urls)
 {
   this.feed_urls = feed_urls;
   this.el = document.createElement('div'); this.el.id = "feed";
+  this.tabs_el = document.createElement('div'); this.tabs_el.id = "tabs";
+  this.wr_el = document.createElement('div'); this.wr_el.id = "tabs_wrapper";
+
+  this.tab_timeline_el = document.createElement('t'); this.tab_timeline_el.id = "tab_timeline";
+  this.tab_mentions_el = document.createElement('t'); this.tab_mentions_el.id = "tab_mentions";
+  this.tab_portals_el = document.createElement('t'); this.tab_portals_el.id = "tab_portals";
+  this.tab_network_el = document.createElement('t'); this.tab_network_el.id = "tab_network";
+  this.tab_services_el = document.createElement('t'); this.tab_services_el.id = "tab_services";
+
+  this.tab_portals_el.setAttribute("data-operation","filter:portals");
+  this.tab_mentions_el.setAttribute("data-operation","filter:mentions");
+  this.tab_timeline_el.setAttribute("data-operation","clear_filter");
+  this.tab_portals_el.setAttribute("data-validate","true");
+  this.tab_mentions_el.setAttribute("data-validate","true");
+  this.tab_timeline_el.setAttribute("data-validate","true");
+
+  this.el.appendChild(this.tabs_el);
+  this.tabs_el.appendChild(this.tab_timeline_el);
+  this.tabs_el.appendChild(this.tab_mentions_el);
+  this.tabs_el.appendChild(this.tab_portals_el);
+  this.tabs_el.appendChild(this.tab_network_el);
+  this.tabs_el.appendChild(this.tab_services_el);
+
+  this.wr_timeline_el = document.createElement('div'); this.wr_timeline_el.id = "wr_timeline";
+  this.wr_portals_el = document.createElement('div'); this.wr_portals_el.id = "wr_portals";
+
+  this.el.appendChild(this.wr_el);
+  this.wr_el.appendChild(this.wr_timeline_el);
+  this.wr_el.appendChild(this.wr_portals_el);
 
   this.queue = [];
   this.portals = [];
 
   this.urls = {};
   this.filter = "";
+  this.target = window.location.hash ? window.location.hash.replace("#","") : "";
+  this.timer = null;
+  this.mentions = 0;
 
   this.install = function()
   {
@@ -17,8 +49,6 @@ function Feed(feed_urls)
 
   this.start = function()
   {
-    console.log(r.home.portal)
-
     this.queue.push(r.home.portal.url);
     for(id in r.home.portal.json.port){
       var url = r.home.portal.json.port[id];
@@ -26,7 +56,7 @@ function Feed(feed_urls)
     }
     this.next();
 
-    setInterval(r.home.feed.next, 500);
+    this.timer = setInterval(r.home.feed.next, 500);
   }
 
   this.last_update = Date.now();
@@ -34,7 +64,7 @@ function Feed(feed_urls)
   this.next = async function()
   {
     if(r.home.feed.queue.length < 1){ console.log("Reached end of queue"); r.home.feed.update_log(); return; }
-    if(Date.now() - r.home.feed.last_update < 500){ return; }
+    if(Date.now() - r.home.feed.last_update < 250){ return; }
 
     var url = r.home.feed.queue[0];
 
@@ -53,28 +83,31 @@ function Feed(feed_urls)
     this.portals.push(portal);
     var activity = portal.archive.createFileActivityStream("portal.json");
     activity.addEventListener('changed', e => {
-      r.home.feed.refresh();
+      r.home.feed.refresh(portal.json.name+" changed");
     });
     r.home.update();
-    r.home.feed.refresh();
+    r.home.feed.refresh(portal.json.name+" registered");
   }
 
   this.update_log = function()
   {
-    if(r.home.feed.queue.length == 0 ){
+    if(r.home.feed.queue.length == 0){
       r.home.log("Idle.");
+      clearInterval(r.home.feed.timer)
     }
     else{
       var progress = (r.home.feed.portals.length/parseFloat(r.home.portal.json.port.length)) * 100;
-      r.home.log("Connecting.. "+parseInt(progress)+"%");
+      r.home.log("Connecting to "+r.home.feed.portals.length+"/"+r.home.portal.json.port.length+" portals.. "+parseInt(progress)+"%");
     }
   }
 
-  this.refresh = function()
+  this.refresh = function(why)
   {
-    console.log("refreshing feed..");
+    if(!why) { console.error("unjustified refresh"); }
+    console.log("refreshing feed…", (r.home.feed.target ? "#" : "")+r.home.feed.target, "→"+why);
 
     var entries = [];
+    this.mentions = 0;
 
     for(id in r.home.feed.portals){
       var portal = r.home.feed.portals[id];
@@ -85,26 +118,47 @@ function Feed(feed_urls)
       return a.timestamp < b.timestamp ? 1 : -1;
     });
 
-    var feed_html = r.home.feed.filter ? "<c class='clear_filter' data-operation='clear_filter' data-validate='validate'>Filtering by <b>"+r.home.feed.filter+"</b></c>" : "";
+    var feed_html = "";
+
     var c = 0;
     for(id in sorted_entries){
       var entry = sorted_entries[id];
+
       if(!entry || entry.timestamp > new Date()) { continue; }
-      if(!entry.is_visible(r.home.feed.filter)){ continue; }
+      if(!entry.is_visible(r.home.feed.filter,r.home.feed.target)){ continue; }
+
       feed_html += entry.to_html();
       if(c > 40){ break; }
       c += 1;
     }
 
+    if(this.mentions > 0) { console.log("we got mentioned!","×"+this.mentions); }
+
+    r.home.feed.tab_timeline_el.innerHTML = entries.length+" Entries";
+    r.home.feed.tab_mentions_el.innerHTML = this.mentions+" Mention"+(this.mentions == 1 ? '' : 's')+"";
+    r.home.feed.tab_portals_el.innerHTML = r.home.feed.portals.length+" Portal"+(r.home.feed.portals.length == 1 ? '' : 's')+"";
+    r.home.feed.tab_network_el.innerHTML = r.home.network.length+" Network"+(r.home.network.length == 1 ? '' : 's')+"";
+
+    r.home.feed.el.className = r.home.feed.target;
+    r.home.feed.wr_timeline_el.innerHTML = feed_html;
     feed_html += "<div class='entry'><t class='portal'>$rotonde</t><t class='timestamp'>Just now</t><hr/><t class='message' style='font-style:italic'>Welcome to #rotonde, a decentralized social network. Share your dat:// url with others and add theirs into the input bar to get started.</t></div>"
-    r.home.feed.el.innerHTML = feed_html;
   }
 }
 
-function portal_from_hash(hash)
+function to_hash(url)
 {
+  return url.replace("dat://","").replace("/","").trim();
+}
+
+function portal_from_hash(url)
+{
+  var hash = to_hash(url);
+
   for(id in r.home.feed.portals){
-    if(hash == r.home.feed.portals[id].url){ return r.home.feed.portals[id].json.name; }
+    if(hash == to_hash(r.home.feed.portals[id].url)){ return "@"+r.home.feed.portals[id].json.name; }
+  }
+  if(hash == to_hash(r.home.portal.hash)){
+    return "@"+r.home.portal.json.name;
   }
   return hash.substr(0,12)+".."+hash.substr(hash.length-3,2);
 }
